@@ -24,6 +24,9 @@ Thumbs.db
 .idea/
 .vscode/
 
+# Claude Code local settings (personal, machine-specific, not for sharing)
+.claude/settings.local.json
+
 # Future chat application output
 node_modules/
 dist/
