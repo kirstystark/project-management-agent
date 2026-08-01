@@ -22,7 +22,7 @@
     "reset": "node scripts/local.mjs reset"
   },
   "dependencies": {
-    "n8n": "2.30.5"
+    "n8n": "^2.32.7"
   },
   "allowScripts": {
     "@parcel/watcher@2.6.0": false,
