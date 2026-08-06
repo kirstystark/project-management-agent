@@ -102,6 +102,13 @@ textarea:focus-visible,
     var(--panel);
 }
 
+/* Keep the sidebar sections at their natural height. Without this the agent
+   list and the saved-chat list shrink below their content once the sidebar is
+   taller than the window, and the two lists overlap instead of scrolling. */
+.agent-panel > * {
+  flex-shrink: 0;
+}
+
 .history-close {
   display: none;
 }
