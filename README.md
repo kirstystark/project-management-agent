@@ -238,6 +238,7 @@ multi-user authentication, RAG, queues, and autonomous background work.
 - [Customise the chat](docs/CUSTOMISE_CHAT.md)
 - [Customise Markdown skills](docs/CUSTOMISE_SKILLS.md)
 - [Use documents and long transcripts](docs/DOCUMENT_UPLOADS.md)
+- [Research a business domain](docs/PAID_DOMAIN_RESEARCH.md)
 - [Understand durable local chat memory](docs/CHAT_PERSISTENCE_PLAN.md)
 - [Troubleshooting quick table](docs/TROUBLESHOOTING.md)
 

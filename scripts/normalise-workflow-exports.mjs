@@ -1,5 +1,11 @@
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { COMMITTED_CHAT_API_ORIGIN } from "./workflow-chat-api.mjs";
+
+// Import points the research tools at whatever CHAT_PORT is set to locally.
+// Export is the other half of that round trip: put the repository default back
+// so a re-export never commits one machine's port number.
+const localChatApiOrigin = /http:\/\/127\.0\.0\.1:\d+(?=\/api\/)/g;
 
 const exportDirectory = process.argv[2];
 const canonicalDirectory = process.argv[3];
@@ -76,7 +82,11 @@ for (const file of exportFiles) {
     tags: canonical.tags ?? [],
   };
 
-  await writeFile(exportPath, `${JSON.stringify(normalised, null, 2)}\n`);
+  const serialised = JSON.stringify(normalised, null, 2).replace(
+    localChatApiOrigin,
+    COMMITTED_CHAT_API_ORIGIN,
+  );
+  await writeFile(exportPath, `${serialised}\n`);
 }
 
 console.log(`Normalised ${exportFiles.length} workflow exports for review.`);

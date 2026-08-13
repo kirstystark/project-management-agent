@@ -11,6 +11,14 @@ The starter agent includes:
 | `project-assistant` | How the agent turns uncertainty into practical next steps |
 | `task-capture` | How the agent prepares a confirmation-gated task proposal |
 | `weekly-status` | How the agent summarises factual task progress |
+| `paid-domain-research` | How the agent researches a business domain with paid SEO data, and how it writes the answer |
+| `domain-research` | How the agent falls back to a free scan of the business website, and how it recalls saved research |
+
+The two research skills are deliberately separate. `paid-domain-research` is the
+default for an ordinary request such as "research example.com". `domain-research`
+is the free website-only version, used when you ask for free research or when the
+paid data is not available. Disabling one leaves the other working. See
+[Paid domain research](PAID_DOMAIN_RESEARCH.md).
 
 ## Change one skill
 
@@ -39,6 +47,8 @@ Open `skills/enabled.txt`. It contains one skill ID per line:
 project-assistant
 task-capture
 weekly-status
+domain-research
+paid-domain-research
 ```
 
 - Remove a line to disable that skill.

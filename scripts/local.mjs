@@ -34,6 +34,10 @@ import net from "node:net";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
+import {
+  COMMITTED_CHAT_API_ORIGIN,
+  rewriteChatApiOrigin,
+} from "./workflow-chat-api.mjs";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const isWindows = process.platform === "win32";
@@ -56,6 +60,8 @@ const runtimeRoot = resolve(
 const npmInstallTimeoutMs = 30 * 60 * 1_000;
 const npmCommandTimeoutMs = 10 * 60 * 1_000;
 const n8nCliTimeoutMs = 5 * 60 * 1_000;
+// Kept in step with SCHEMA_VERSION in apps/chat/src/chat-store.ts.
+const chatDatabaseSchemaVersion = 3;
 
 const paths = {
   envFile: join(projectRoot, ".env"),
@@ -111,6 +117,12 @@ const workflowIds = {
     "phase5ProposeCreateTask",
     "phase5ProposeTaskStatus",
     "phase5ConfirmTaskWrite",
+    "phase9StartDomainResearch",
+    "phase9CompleteDomainResearch",
+    "phase9GetBusinessMemory",
+    "phase11StartPaidDomainResearch",
+    "phase11CompletePaidDomainResearch",
+    "phase11GetPaidDomainResearch",
   ],
 };
 
@@ -125,6 +137,15 @@ const exportedWorkflowFiles = [
   ["phase5ProposeCreateTask", "30-tool-propose-create-task.json"],
   ["phase5ProposeTaskStatus", "31-tool-propose-update-task-status.json"],
   ["phase5ConfirmTaskWrite", "40-confirm-task-write.json"],
+  ["phase9StartDomainResearch", "50-tool-start-domain-research.json"],
+  ["phase9CompleteDomainResearch", "51-tool-complete-domain-research.json"],
+  ["phase9GetBusinessMemory", "52-tool-get-business-memory.json"],
+  ["phase11StartPaidDomainResearch", "53-tool-start-paid-domain-research.json"],
+  [
+    "phase11CompletePaidDomainResearch",
+    "54-tool-complete-paid-domain-research.json",
+  ],
+  ["phase11GetPaidDomainResearch", "55-tool-get-paid-domain-research.json"],
   ["phase3AgentHealth", "90-debug-agent-health.json"],
 ];
 
@@ -1120,6 +1141,39 @@ async function compileSkillBundle() {
   return JSON.stringify(await compileSkills());
 }
 
+// The research tools reach the chat app over HTTP, and committed exports carry
+// the repository default origin. When CHAT_PORT is set to anything else, import
+// from a staged copy pointed at the real origin instead, so the committed files
+// stay reviewable and the imported ones actually work. Returns the directory to
+// import from.
+function stageWorkflowsForImport(cfg) {
+  const origin = `http://127.0.0.1:${cfg.chatPort}`;
+  if (origin === COMMITTED_CHAT_API_ORIGIN) {
+    return paths.workflowsDir;
+  }
+  const stagingDir = tmpPath("workflow-import");
+  rmSync(stagingDir, { recursive: true, force: true });
+  mkdirSync(stagingDir, { recursive: true });
+  let rewritten = 0;
+  for (const file of readdirSync(paths.workflowsDir)) {
+    if (!file.endsWith(".json")) {
+      continue;
+    }
+    const source = readFileSync(join(paths.workflowsDir, file), "utf8");
+    const staged = rewriteChatApiOrigin(source, origin);
+    if (staged !== source) {
+      rewritten += 1;
+    }
+    // Fail loudly rather than importing a workflow the rewrite has corrupted.
+    JSON.parse(staged);
+    writeFileSync(join(stagingDir, file), staged);
+  }
+  print(
+    `Pointing ${rewritten} workflow${rewritten === 1 ? "" : "s"} at the chat app on port ${cfg.chatPort}.`,
+  );
+  return stagingDir;
+}
+
 async function importReviewedWorkflows() {
   validateWorkflowFiles();
 
@@ -1129,9 +1183,11 @@ async function importReviewedWorkflows() {
     await waitForService("n8n");
   }
 
+  const importDir = stageWorkflowsForImport(config());
+
   print("\nImporting the reviewed workflows as inactive drafts...");
   n8nCliOrThrow(
-    ["import:workflow", "--separate", `--input=${paths.workflowsDir}`],
+    ["import:workflow", "--separate", `--input=${importDir}`],
     "Workflow import",
   );
 
@@ -1166,6 +1222,9 @@ async function importReviewedWorkflows() {
     for (const id of published) {
       runN8nCli(["unpublish:workflow", `--id=${id}`], { capture: true });
     }
+    if (importDir !== paths.workflowsDir) {
+      rmSync(importDir, { recursive: true, force: true });
+    }
     await restartN8n();
   }
 
@@ -1176,6 +1235,9 @@ async function importReviewedWorkflows() {
   print(`Open http://localhost:${cfg.n8nPort} and follow docs/N8N_AGENT_SETUP.md.`);
   print(
     "The main agent stays inactive until you select your Anthropic credential and publish it.",
+  );
+  print(
+    "Paid domain research also needs a DataForSEO credential: see docs/PAID_DOMAIN_RESEARCH.md.",
   );
 }
 
@@ -1782,7 +1844,15 @@ async function commandRestore(args) {
       return 1;
     }
     const chatCheck = sqliteQuickCheck(chatBackupDatabase);
-    if (!chatCheck.ok || chatCheck.schemaVersion !== 1) {
+    // Migrations only ever move forward and only ever add, so a backup taken
+    // before saved research existed restores fine and upgrades on next start.
+    // A newer schema is the one this build cannot safely read.
+    if (
+      !chatCheck.ok ||
+      !Number.isInteger(chatCheck.schemaVersion) ||
+      chatCheck.schemaVersion < 1 ||
+      chatCheck.schemaVersion > chatDatabaseSchemaVersion
+    ) {
       printError("The backed-up chat database failed its integrity or schema check. No local data was changed.");
       return 1;
     }
@@ -1904,7 +1974,9 @@ async function commandDiagnose() {
   };
 
   print("AI Solopreneur diagnostics");
-  print("This check never calls Claude or displays credential values.\n");
+  print(
+    "This check never calls Claude or DataForSEO and never displays credential values.\n",
+  );
 
   ok(`Node.js ${process.versions.node} is available.`);
 
@@ -1956,8 +2028,13 @@ async function commandDiagnose() {
   }
   if (existsSync(paths.chatDatabase)) {
     const chatDatabaseCheck = sqliteQuickCheck(paths.chatDatabase);
-    if (chatDatabaseCheck.ok && chatDatabaseCheck.schemaVersion === 1) {
-      ok("The local chat database and search index are ready (schema 1).");
+    if (
+      chatDatabaseCheck.ok &&
+      chatDatabaseCheck.schemaVersion === chatDatabaseSchemaVersion
+    ) {
+      ok(
+        `The local chat database, search index, and saved research are ready (schema ${chatDatabaseSchemaVersion}).`,
+      );
     } else {
       failure(
         "The local chat database failed its integrity or schema check. Create a private backup before troubleshooting it.",
@@ -2026,6 +2103,43 @@ async function commandDiagnose() {
         ok("An Anthropic credential exists and is selected by the Claude node.");
       } else {
         action("Create an Anthropic credential named Anthropic account and select it in Claude - Sonnet 4.6.");
+      }
+
+      // Confirms only that a Basic Auth credential is selected. It never calls
+      // DataForSEO and never reads a credential value.
+      const paidWorkflow = exportedWorkflow("phase11StartPaidDomainResearch");
+      const dataForSeoExport = tmpPath("diagnostic-dataforseo-credentials.json");
+      let dataForSeoSelected = false;
+      try {
+        const result = runN8nCli(
+          ["export:credentials", "--all", `--output=${dataForSeoExport}`],
+          { capture: true },
+        );
+        if (result.status === 0 && paidWorkflow !== null) {
+          const reference = paidWorkflow.nodes?.find(
+            (node) => node.name === "DataForSEO Ranked Keywords",
+          )?.credentials?.httpBasicAuth;
+          const credentials = readExportedRows(dataForSeoExport);
+          dataForSeoSelected = Boolean(
+            reference?.id &&
+              credentials.some(
+                (credential) =>
+                  credential.id === reference.id &&
+                  credential.type === "httpBasicAuth",
+              ),
+          );
+        }
+      } catch {
+        dataForSeoSelected = false;
+      } finally {
+        rmSync(dataForSeoExport, { force: true });
+      }
+      if (dataForSeoSelected) {
+        ok("A DataForSEO credential is selected by the paid research workflow.");
+      } else {
+        action(
+          "Optional: to turn on paid domain research, create an HTTP Basic Auth credential named DataForSEO API and select it on every DataForSEO node in workflow 53. Free website research works without it.",
+        );
       }
     }
 
