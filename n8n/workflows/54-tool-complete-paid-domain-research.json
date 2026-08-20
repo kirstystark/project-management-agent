@@ -302,5 +302,10 @@
     "paidCalls": "none"
   },
   "id": "phase11CompletePaidDomainResearch",
-  "tags": []
+  "tags": [
+    {
+      "id": "tagAgentCanDo",
+      "name": "What your agent can do"
+    }
+  ]
 }
